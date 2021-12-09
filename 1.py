@@ -4,40 +4,45 @@ import sqlite3
 import sys
 
 from PyQt5 import QtCore, QtGui, QtWidgets, uic
-from PyQt5.QtCore import Qt, QTime, QTimer, QPoint, QDate, pyqtSignal, QObject
-from PyQt5.QtGui import QPainter, QColor, QBrush, QPen, QPolygon
+from PyQt5.QtCore import Qt, QTime, QTimer, QPoint, QDate, pyqtSignal, QObject, QRect
+from PyQt5.QtGui import QPainter, QColor, QBrush, QPen, QPolygon, QPalette, QPixmap, QImage
 from PyQt5.QtMultimedia import QAudioOutput, QMediaPlayer
 from PyQt5.QtWidgets import QApplication, QMainWindow, QGridLayout, QLabel, QPushButton, QVBoxLayout, \
-    QHBoxLayout, QDateTimeEdit, QFileDialog, QScrollArea, QGroupBox
+    QHBoxLayout, QDateTimeEdit, QFileDialog, QScrollArea, QGroupBox, QWidget
 
 db_connection = sqlite3.connect("clocks.sqlite")  # инициализируем базу данных
 cursor = db_connection.cursor()
 
 
 class Clock(QtWidgets.QWidget):
-    L = 12
-    r = 20
-    DELTA_ANGLE = 2 * math.pi / L
-
-    def __init__(self, parent=None):
+    def __init__(self, timezone, parent=None):
         super().__init__(parent)
+        # Таймер, для обновления окна
         timer = QTimer(self)
         timer.timeout.connect(self.update)
         timer.start(1000)
-        self.setStyleSheet('QWidget {Background-color: %s}' % QColor('black').name())
-        self.setStyleSheet("background : black;")
-        self.hPointer = QtGui.QPolygon([QPoint(6, 7),
+        self.timezone = timezone
+        #
+        # self.setStyleSheet('QWidget {Background-color: %s}' % QColor('black').name())
+        # self.setStyleSheet("background : black;")
+        self.hourPointer = QtGui.QPolygon([QPoint(6, 7),
+                                           QPoint(-6, 7),
+                                           QPoint(0, -50)])
+        self.minutesPointer = QPolygon([QPoint(6, 7),
                                         QPoint(-6, 7),
-                                        QPoint(0, -50)])
-        self.mPointer = QPolygon([QPoint(6, 7),
-                                  QPoint(-6, 7),
-                                  QPoint(0, -70)])
-        self.bColor = Qt.green
+                                        QPoint(0, -70)])
+        # self.sPointer = QPolygon([QPoint(1, 1),
+        #                           QPoint(-1, 1),
+        #                           QPoint(0, -90)])
+        self.bColor = Qt.black
 
     def paintEvent(self, e):
         painter = QPainter(self)
-        rec = min(self.width(), self.height())
-        tik = QTime.currentTime()
+        rec = min(self.width(), self.height())  # берём меньшую из сторон окна
+        # устанавливаем время часов
+        delta = datetime.timedelta(hours=self.timezone, minutes=0)
+        timeInTimezone = (datetime.datetime.now(datetime.timezone.utc) + delta).time()
+        tik = QTime(timeInTimezone.hour, timeInTimezone.minute, timeInTimezone.second)
 
         def drawPointer(color, rotation, pointer):
             painter.setBrush(QBrush(color))
@@ -46,35 +51,24 @@ class Clock(QtWidgets.QWidget):
             painter.drawConvexPolygon(pointer)
             painter.restore()
 
-        painter.setRenderHint(QPainter.Antialiasing)
+        #painter.setRenderHint(QPainter.Antialiasing)
+        # Инициализируем картинку заднего фона
+        a = QImage('clocks.png')
+        # a.scaled(self.rect().size(), Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+        # Создаем прямоугольник, в который будет вписываться задний фон
+        target = QRect(0, 0, rec, rec)
+        target.moveCenter(QPoint(int(self.width() / 2), int(self.height() / 2)))  # Двигаем задний фон в центр
+
+        painter.drawImage(target, a)  # отрисовываем задний фон
+        # Перемещаем место отрисовки в центр виджета
         painter.translate(self.width() / 2, self.height() / 2)
         painter.scale(rec / 250, rec / 250)
         painter.setPen(QtCore.Qt.NoPen)
-        drawPointer(self.bColor, (30 * (tik.hour() + tik.minute() / 60)), self.hPointer)
-        drawPointer(self.bColor, (6 * (tik.minute() + tik.second() / 60)), self.mPointer)
-        painter.setPen(QPen(self.bColor))
-        for i in range(0, 60):
-            if (i % 5) == 0:
-                # painter.drawText(80, 0, '1')
-                painter.drawLine(87, 0, 97, 0)
-            painter.rotate(6)
-
-        rect = QtCore.QRectF(0, 0, rec / 100, rec / 100)
-        for i in range(self.L):
-            j = (i + 2) % self.L + 1
-            c = self.center_by_index(i)
-            #rect.moveCenter(c)
-            painter.setPen(QtGui.QColor("black"))
-            painter.drawText(rect, QtCore.Qt.AlignCenter, str(j))
-
+        # Отрисовываем стрелки
+        drawPointer(self.bColor, (30 * (tik.hour() + tik.minute() / 60)), self.hourPointer)
+        drawPointer(self.bColor, (6 * (tik.minute() + tik.second() / 60)), self.minutesPointer)
+        # drawPointer(self.bColor, (6.0 * tik.second()), self.sPointer)
         painter.end()
-        self.update()
-
-    def center_by_index(self, index):
-        R = min(self.rect().width(), self.rect().height()) / 2
-        angle = self.DELTA_ANGLE * index
-        center = self.rect().center()
-        return center + (R - self.r) * QtCore.QPointF(math.cos(angle), math.sin(angle))
 
 
 class AddAlarmClockWindow(QtWidgets.QDialog):
@@ -172,6 +166,7 @@ class App(QMainWindow, QObject):
         self.height = 400
         cursor.execute("""CREATE TABLE IF NOT EXISTS alarms (id INTEGER PRIMARY KEY AUTOINCREMENT 
         NOT NULL UNIQUE, datetime DATETIME NOT NULL, sound STRING NOT NULL);""")
+        cursor.execute("""CREATE TABLE IF NOT EXISTS clocks (city STRING NOT NULL, timezone INT NOT NULL);""")
         self.c = Communicate()
         self.c.closeApp.connect(self.updateAlarms)  # Подключения сигнала обновления списка будильников
         self.popup = AddAlarmClockWindow(self.c.closeApp, self)
@@ -182,10 +177,14 @@ class App(QMainWindow, QObject):
 
     def InitWindow(self):
         grid = QGridLayout()
-        for i in range(3):
-            w = Clock(self)
+        l = cursor.execute("""SELECT * FROM clocks""").fetchall()
+        print(l)
+        for i in range(len(l)):
+            w = Clock(l[i][1], self)
             grid.addWidget(w, 0, i)
-            grid.addWidget(QPushButton("Hello"), 1, i)
+            p = QPushButton(l[i][0])
+            p.setEnabled(False)
+            grid.addWidget(p, 1, i)
         self.ClocksBox.setLayout(grid)
 
         self.formLayout = QGridLayout()
@@ -231,9 +230,12 @@ class App(QMainWindow, QObject):
         player.play()
 
     def updateAlarms(self):
+        # Очищаем список будильников
         for i in reversed(range(self.formLayout.count())):
             self.formLayout.itemAt(i).widget().setParent(None)
+        # Получаем будильники из базы данных
         l = cursor.execute("""SELECT datetime, sound FROM alarms ORDER BY datetime DESC""").fetchall()
+        # Добавляем будильники в список
         for i in range(len(l)):
             label1 = QLabel(l[i][0])
             label1.setStyleSheet("background-color: #DCDCDC; padding: 0; margin: 0;")

@@ -1,36 +1,63 @@
 import sys
-import math
-from PyQt5 import QtCore, QtGui, QtWidgets
+
+from PyQt5 import QtGui, QtWidgets
+from PyQt5.QtCore import QPoint, QTimer, Qt, QRect
+from PyQt5.QtGui import QBrush, QPolygon, QPainter, QPen, QImage
+from PyQt5.QtWidgets import QApplication
 
 
-class ClockWidget(QtWidgets.QWidget):
+class Clock(QtWidgets.QWidget):
     L = 12
-    r = 40
-    DELTA_ANGLE = 2 * math.pi / L
-    current_index = 9
+    r = 20
 
-    def paintEvent(self, event):
-        painter = QtGui.QPainter(self)
-        painter.setRenderHint(QtGui.QPainter.Antialiasing)
-        rect = QtCore.QRectF(0, 0, self.r, self.r)
-        # !!!
-        for i in range(self.L):
-            j = (i + 2) % self.L + 1
-            c = self.center_by_index(i)
-            rect.moveCenter(c)
-            painter.setPen(QtGui.QColor("black"))
-            painter.drawText(rect, QtCore.Qt.AlignCenter, str(j))
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        timer = QTimer(self)
+        timer.timeout.connect(self.update)
+        timer.start(1000)
 
-    def center_by_index(self, index):
-        R = min(self.rect().width(), self.rect().height()) / 2
-        angle = self.DELTA_ANGLE * index
-        center = self.rect().center()
-        return center + (R - self.r) * QtCore.QPointF(math.cos(angle), math.sin(angle))
+        self.hPointer = QtGui.QPolygon([QPoint(6, 7),
+                                        QPoint(-6, 7),
+                                        QPoint(0, -50)])
+        self.mPointer = QPolygon([QPoint(6, 7),
+                                  QPoint(-6, 7),
+                                  QPoint(0, -70)])
+
+        self.bColor = Qt.green
+
+    def paintEvent(self, e):
+        painter = QPainter(self)
+        rec = min(self.width(), self.height())  # берём меньшую из сторон окна
+
+        def drawPointer(color, rotation, pointer):
+            painter.setBrush(QBrush(color))
+            painter.save()
+            painter.rotate(rotation)
+            painter.drawConvexPolygon(pointer)
+            painter.restore()
+
+        painter.setRenderHint(QPainter.Antialiasing)
+        a = QImage('clocks.png')
+       # a.scaled(self.rect().size(), Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+        target = QRect(0, 0, rec, rec)
+        target.moveCenter(QPoint(int(self.width() / 2), int(self.height() / 2)))
+        painter.drawRect(target)
+        painter.drawImage(target, a)
+        painter.translate(self.width() / 2, self.height() / 2)
+        painter.drawEllipse(1, 1, 1, 1)
+        painter.scale(rec / 250, rec / 250)
+        painter.setPen(QPen(self.bColor))
+        for i in range(0, 60):
+            if (i % 5) == 0:
+                painter.drawLine(87, 0, 97, 0)
+            painter.rotate(6)
+
+        painter.end()
+        self.update()
 
 
 if __name__ == "__main__":
-    app = QtWidgets.QApplication(sys.argv)
-    view = ClockWidget()
-    view.resize(400, 400)
-    view.show()
+    app = QApplication(sys.argv)
+    clock = Clock()
+    clock.show()
     sys.exit(app.exec_())
