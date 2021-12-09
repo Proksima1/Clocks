@@ -23,18 +23,11 @@
       <height>461</height>
      </rect>
     </property>
-    <layout class="QVBoxLayout" name="verticalLayout">
+    <layout class="QVBoxLayout" name="mainLayout">
      <item>
       <widget class="QGroupBox" name="ClocksBox">
        <property name="title">
         <string>Часы</string>
-       </property>
-      </widget>
-     </item>
-     <item>
-      <widget class="QGroupBox" name="TimersBox">
-       <property name="title">
-        <string>Будильники</string>
        </property>
       </widget>
      </item>
@@ -54,11 +47,11 @@
     <property name="title">
      <string>Опции</string>
     </property>
-    <addaction name="action"/>
+    <addaction name="add"/>
    </widget>
    <addaction name="menu"/>
   </widget>
-  <action name="action">
+  <action name="add">
    <property name="text">
     <string>Добавить будильник</string>
    </property>
