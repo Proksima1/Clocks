@@ -1,16 +1,16 @@
 import datetime
-import math
 import sqlite3
 import sys
+import threading
 
 from PyQt5 import QtCore, QtGui, QtWidgets, uic
 from PyQt5.QtCore import Qt, QTime, QTimer, QPoint, QDate, pyqtSignal, QObject, QRect
-from PyQt5.QtGui import QPainter, QColor, QBrush, QPen, QPolygon, QPalette, QPixmap, QImage
-from PyQt5.QtMultimedia import QAudioOutput, QMediaPlayer
+from PyQt5.QtGui import QPainter, QBrush, QPolygon, QImage
 from PyQt5.QtWidgets import QApplication, QMainWindow, QGridLayout, QLabel, QPushButton, QVBoxLayout, \
-    QHBoxLayout, QDateTimeEdit, QFileDialog, QScrollArea, QGroupBox, QWidget
+    QHBoxLayout, QDateTimeEdit, QFileDialog, QScrollArea, QGroupBox, QMessageBox
 
-db_connection = sqlite3.connect("clocks.sqlite")  # инициализируем базу данных
+# инициализируем базу данных
+db_connection = sqlite3.connect("clocks.sqlite")
 cursor = db_connection.cursor()
 
 
@@ -22,18 +22,12 @@ class Clock(QtWidgets.QWidget):
         timer.timeout.connect(self.update)
         timer.start(1000)
         self.timezone = timezone
-        #
-        # self.setStyleSheet('QWidget {Background-color: %s}' % QColor('black').name())
-        # self.setStyleSheet("background : black;")
         self.hourPointer = QtGui.QPolygon([QPoint(6, 7),
                                            QPoint(-6, 7),
                                            QPoint(0, -50)])
         self.minutesPointer = QPolygon([QPoint(6, 7),
                                         QPoint(-6, 7),
                                         QPoint(0, -70)])
-        # self.sPointer = QPolygon([QPoint(1, 1),
-        #                           QPoint(-1, 1),
-        #                           QPoint(0, -90)])
         self.bColor = Qt.black
 
     def paintEvent(self, e):
@@ -41,20 +35,19 @@ class Clock(QtWidgets.QWidget):
         rec = min(self.width(), self.height())  # берём меньшую из сторон окна
         # устанавливаем время часов
         delta = datetime.timedelta(hours=self.timezone, minutes=0)
-        timeInTimezone = (datetime.datetime.now(datetime.timezone.utc) + delta).time()
+        timeInTimezone = (datetime.datetime.now(datetime.timezone.utc) + delta).time()  # Время в заданное зоне
         tik = QTime(timeInTimezone.hour, timeInTimezone.minute, timeInTimezone.second)
 
         def drawPointer(color, rotation, pointer):
+            # Рисуем стрелку
             painter.setBrush(QBrush(color))
             painter.save()
             painter.rotate(rotation)
             painter.drawConvexPolygon(pointer)
             painter.restore()
 
-        #painter.setRenderHint(QPainter.Antialiasing)
         # Инициализируем картинку заднего фона
         a = QImage('clocks.png')
-        # a.scaled(self.rect().size(), Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
         # Создаем прямоугольник, в который будет вписываться задний фон
         target = QRect(0, 0, rec, rec)
         target.moveCenter(QPoint(int(self.width() / 2), int(self.height() / 2)))  # Двигаем задний фон в центр
@@ -67,7 +60,6 @@ class Clock(QtWidgets.QWidget):
         # Отрисовываем стрелки
         drawPointer(self.bColor, (30 * (tik.hour() + tik.minute() / 60)), self.hourPointer)
         drawPointer(self.bColor, (6 * (tik.minute() + tik.second() / 60)), self.minutesPointer)
-        # drawPointer(self.bColor, (6.0 * tik.second()), self.sPointer)
         painter.end()
 
 
@@ -81,6 +73,7 @@ class AddAlarmClockWindow(QtWidgets.QDialog):
         self.title.setAlignment(Qt.AlignHCenter)
         layout.addWidget(self.title)
 
+        # Строка для выбора даты будильника
         hbox = QHBoxLayout()
         self.label = QLabel("Дата срабатывание будильника")
         self.label.setFont(QtGui.QFont("Arial", 8))
@@ -90,6 +83,7 @@ class AddAlarmClockWindow(QtWidgets.QDialog):
         hbox.addWidget(self.datetime)
         layout.addLayout(hbox)
 
+        # Строка для выбора мелодии будильника
         hbox = QHBoxLayout()
         self.label2 = QLabel("Мелодия будильника")
         self.label2.setFont(QtGui.QFont("Arial", 8))
@@ -99,12 +93,14 @@ class AddAlarmClockWindow(QtWidgets.QDialog):
         hbox.addWidget(self.fileButton)
         layout.addLayout(hbox)
 
+        # Строка для уведомлений/ошибок
         self.hbox = QHBoxLayout()
         self.fileLabel = QLabel()
         self.fileLabel.setWordWrap(True)
         self.hbox.addWidget(self.fileLabel)
         layout.addLayout(self.hbox)
 
+        # Строка для кнопок
         hbox = QHBoxLayout()
         self.cancel = QPushButton("Отмена")
         self.cancel.clicked.connect(self.hide)
@@ -115,7 +111,7 @@ class AddAlarmClockWindow(QtWidgets.QDialog):
         layout.addLayout(hbox)
         self.setLayout(layout)
         self.setWindowTitle('Добавление будильника')
-        self.output = {}
+        self.output = {}  # Словарь для выходных данных
 
     def getSound(self):
         sound = QFileDialog.getOpenFileName(self, 'Select sound', '', 'Audio Files (*.mp3 *.wav *.ogg)')
@@ -148,14 +144,16 @@ class AddAlarmClockWindow(QtWidgets.QDialog):
         self.signal.emit()
 
 
-"""Класс для обновления списка будильников"""
-
-
 class Communicate(QObject):
+    """Класс для обновления списка будильников"""
     closeApp = pyqtSignal()
+    alarm = pyqtSignal()
 
 
 class App(QMainWindow, QObject):
+    alarmed = False  # Переменная для единоразового оповещения пользователя
+    alarmUpdate = False  # Переменная, оповещающая о том, что данные будильников обновились
+
     def __init__(self):
         super().__init__()
         uic.loadUi('main.ui', self)
@@ -164,18 +162,26 @@ class App(QMainWindow, QObject):
         self.top = 200
         self.width = 400
         self.height = 400
+        # Создаем таблицы в бд
         cursor.execute("""CREATE TABLE IF NOT EXISTS alarms (id INTEGER PRIMARY KEY AUTOINCREMENT 
         NOT NULL UNIQUE, datetime DATETIME NOT NULL, sound STRING NOT NULL);""")
         cursor.execute("""CREATE TABLE IF NOT EXISTS clocks (city STRING NOT NULL, timezone INT NOT NULL);""")
         self.c = Communicate()
-        self.c.closeApp.connect(self.updateAlarms)  # Подключения сигнала обновления списка будильников
-        self.popup = AddAlarmClockWindow(self.c.closeApp, self)
+        self.c.closeApp.connect(
+            lambda: self.updateAlarms(db_connection))  # Подключения сигнала обновления списка будильников
+        self.c.alarm.connect(self.alarmGoing)
+        self.popup = AddAlarmClockWindow(self.c.closeApp, self)  # Инициализация попапа для добавления будильников
         self.add.triggered.connect(self.addAlarm)  # Привязка кнопки из menubar к вызову функции
         self.InitWindow()
-        self.updateAlarms()
+        # Создаем и запускаем поток, отслеживающий ближайший будильник
+        thread = threading.Thread(target=self.setAlarm, daemon=True)
+        thread.start()
+        # Обновляем список будильников
+        self.updateAlarms(db_connection)
         self.setWindowTitle('PyQtProject')
 
     def InitWindow(self):
+        """Инициализая окна"""
         grid = QGridLayout()
         l = cursor.execute("""SELECT * FROM clocks""").fetchall()
         print(l)
@@ -190,51 +196,72 @@ class App(QMainWindow, QObject):
         self.formLayout = QGridLayout()
         groupBox = QGroupBox("Будильники")
         groupBox.setStyleSheet('background-color: white;')
-
-        # for n in range(100):
-        #     label1 = QLabel('Slime_%2d' % n)
-        #     label1.setStyleSheet("background-color: #DCDCDC; padding: 0; margin: 0;")
-        #     label2 = QLabel('lol')
-        #     label2.setStyleSheet("background-color: #DCDCDC; padding: 10px 0 10px 0; margin: 0;")
-        #     formLayout.addWidget(label1, n, 0)
-        #     formLayout.addWidget(label2, n, 1)
-        # formLayout.addWidget(label1)
-        # formLayout.addRow(label1, label2)
-
         groupBox.setLayout(self.formLayout)
-
         scroll = QScrollArea()
         scroll.setWidget(groupBox)
         scroll.setWidgetResizable(True)
         scroll.setFixedHeight(226)
-        # scroll.setFixedSize(scroll.width(), scroll.height())
-
         self.mainLayout.addWidget(scroll)
-        """"""
-        # self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
-        # self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        # self.scroll.setWidgetResizable(True)
-        # self.scroll.setWidget(self.TimersBox)
 
     def addAlarm(self):
         # Открываем окно для добавления будильника
         self.popup.show()
 
-    def setAlarm(self):
-        player = QMediaPlayer
-        audioOutput = QAudioOutput
-        player.setAudioOutput(audioOutput)
-        connect(player, SIGNAL(positionChanged(qint64)), self, SLOT(positionChanged(qint64)))
-        player.setSource(QUrl.fromLocalFile("/Users/me/Music/coolsong.mp3"))
-        audioOutput.setVolume(50)
-        player.play()
+    def alarmGoing(self):
+        # Открываем окно оповещения о будильнике
+        date = cursor.execute("""SELECT sound FROM alarms ORDER BY datetime ASC""").fetchone()
+        print(date)
+        msg = QMessageBox()
+        msg.setIcon(QMessageBox.Information)
+        msg.setWindowTitle("Будильник")
+        msg.setText("Сработал будильник")
+        okButton = msg.addButton(QMessageBox.Ok)
+        msg.exec()
 
-    def updateAlarms(self):
+    def setAlarm(self):
+
+        def getNearestAlarm():
+            self.alarmed = False
+            conn = sqlite3.connect("clocks.sqlite")
+            cursor = conn.cursor()
+            date = cursor.execute("""SELECT datetime, sound FROM alarms ORDER BY datetime ASC""").fetchone()
+            conn.close()
+            return date
+
+        l = getNearestAlarm()
+        while True:
+            # Проверка, не появились ли новые данные
+            if self.alarmUpdate:
+                self.alarmUpdate = False
+                l = getNearestAlarm()
+            if l is not None:
+                # Проверка, что нынешнее время совпадает со временем, на которое установлен будильник
+                alarmDate = datetime.datetime.strptime(l[0], '%Y-%m-%d %H:%M:%S')
+                if alarmDate.date() == datetime.date.today():
+                    if alarmDate.time().strftime('%H-%M') == datetime.datetime.strftime(datetime.datetime.now(),
+                                                                                        '%H-%M'):
+                        if not self.alarmed:
+                            # Получаем ближайший будильник
+                            self.c.alarm.emit()
+                            l = getNearestAlarm()
+                            self.alarmed = True
+                            # Обновляем список будильников и включаем оповещение
+                            self.c.closeApp.emit()
+
+    def updateAlarms(self, db_connect):
         # Очищаем список будильников
+        l = db_connect.cursor().execute("""SELECT * FROM alarms""").fetchall()
+        for i in l:
+            alarmDate = datetime.datetime.strptime(i[1], '%Y-%m-%d %H:%M:%S')
+            if datetime.datetime.now() > alarmDate:
+                db_connect.cursor().execute(f"""DELETE FROM alarms WHERE id='{i[0]}'""")
+        db_connect.commit()
+        # l = cursor.execute("""DELETE FROM alarm WHERE """)
         for i in reversed(range(self.formLayout.count())):
             self.formLayout.itemAt(i).widget().setParent(None)
         # Получаем будильники из базы данных
-        l = cursor.execute("""SELECT datetime, sound FROM alarms ORDER BY datetime DESC""").fetchall()
+        l = db_connect.cursor().execute("""SELECT datetime, sound FROM alarms ORDER BY datetime DESC""").fetchall()
+        self.alarmUpdate = True
         # Добавляем будильники в список
         for i in range(len(l)):
             label1 = QLabel(l[i][0])
